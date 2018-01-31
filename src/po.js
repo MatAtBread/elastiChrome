@@ -1,7 +1,6 @@
 import EventEmitter from './eventemitter.js';
 import * as observable from './observers.js';
 
-
 var construct = 'constructed' ;
 var exports = {} ;
 
@@ -185,14 +184,14 @@ exports.tag = function tag(obj,tags,tagPrototypes){
         var ev = new Event('replacedWith') ;
         ev.movedTo = dest ;
         this.dispatchEvent(ev) ;
-    };/*
+    };
     tagPrototypes.addClass = function addClass(cl) {
         if (!this.classList.contains(cl))
             this.classList.add(cl) ;
     };
     tagPrototypes.removeClass = function removeClass(cl) {
         this.classList.remove(cl) ;
-    };
+    };/*
     tagPrototypes.hasClass = function hasClass(cl) {
         return this.classList.contains(cl) ;
     };*/

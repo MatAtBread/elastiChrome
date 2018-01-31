@@ -1,7 +1,7 @@
 import po from './po.js';
 
 po.enableOnRemovedFromDOM() ;
-po.tag(window,"DIV,INPUT,BUTTON,SPAN,TABLE,TR,TD,A",{
+po.tag(window,"DIV,INPUT,BUTTON,SPAN,TABLE,TR,TD,A,SELECT,OPTION",{
 	properties(fields){
 		var values = {} ;
 		Object.keys(fields).forEach(key => {
@@ -23,17 +23,6 @@ po.tag(window,"DIV,INPUT,BUTTON,SPAN,TABLE,TR,TD,A",{
 		}) ;
 	}
 }) ;
-
-/*function fetch(url,opts) {
-	return new Promise(function(resolve,reject){
-		var x = new XMLHttpRequest() ;
-		x.onload = function(){ resolve(x.textResponse) ; } ;
-		x.onerror = function() { reject(new Error(x.statusCode+" "+x.statusText+" "+x.toString())) } ;
-		x.open("GET",url,true) ;
-		x.withCredentials = false;
-		x.send() ;
-	}) ;	
-}*/
 
 function fetchJson(url,opts) {
 	return fetch(url, opts).then(r => r.json());
@@ -65,7 +54,7 @@ export const Icon = SPAN.extended(() => ({
 		}) ;
 	},
 	prototype: {
-		className: 'Icon'
+		'@addClass': 'Icon'
 	}
 }));
 
@@ -102,8 +91,12 @@ const JsonEditor = DIV.extended({
 					this.editor.setValue('') ;
 				else {
 					var str = JSON.stringify(obj,null,2) ;
-					if (this.autoHeight)
+					if (this.autoHeight) {
+//						var r = this.getBoundingClientRect(this.parentNode) ;
+//						var s = this.getBoundingClientRect(this) ;
+//						this.style.maxHeight = (r.height-s.top)+"px" ;
 						this.style.height = (5+str.split("\n").length)+"em" ;
+					}
 					this.editor.setValue(str) ;
 				}
 				this.editor.clearSelection() ;
@@ -114,9 +107,6 @@ const JsonEditor = DIV.extended({
 	prototype:{
 		onRemovedFromDOM(){
 			this.editor.destroy() ;
-		},
-		style:{
-			width:'80em'
 		}
 	}
 }) ;
@@ -167,9 +157,9 @@ const PopDownMenu = BUTTON.extended({
 			} else {
 				var opts = await this.options() ;
 				if (Array.isArray(opts)) {
-					this.append(DIV({ className: 'PopDownMenu-menu' },opts.map(k => DIV({onclick:e => this.selected(k), value:k},k)))) ;
+					this.append(DIV({ '@addClass': 'PopDownMenu-menu' },opts.map(k => DIV({onclick:e => this.selected(k), value:k},k)))) ;
 				} else {
-					this.append(DIV({ className: 'PopDownMenu-menu' },Object.keys(opts).map(k => DIV({onclick:e => this.selected(k), value:opts[k]},k)))) ;
+					this.append(DIV({ '@addClass': 'PopDownMenu-menu' },Object.keys(opts).map(k => DIV({onclick:e => this.selected(k), value:opts[k]},k)))) ;
 				}
 			}
 		}
@@ -199,7 +189,7 @@ const Option = SPAN.extended({
 	}
 	`,
 	prototype:{
-		className:'Option',
+		'@addClass':'Option',
 		onclick() { 
 			if (this.parentNode.selectedItem)
 				this.parentNode.selectedItem.classList.remove("selected") ;
@@ -218,9 +208,6 @@ const ES = {
 		}
 		`,
 		constructed(){
-			// Info
-//			this.append(DIV()) ;
-			// Menu
 			var menu = DIV({
 					style:{
 						backgroundColor:'#eee',
@@ -235,7 +222,7 @@ const ES = {
 			this.append(menu) ;
 			this.append(()=> on (menu) (menu.selectedItem && ES[menu.selectedItem.value]({
 				host:this.host,
-				className:'ES-Explorer'
+				'@addClass':'ES-Explorer'
 			}))) ;
 		}
 	}),
@@ -261,23 +248,38 @@ const ES = {
 			) ;
 		},
 		prototype:{
-			className:'ES-Node'
+			'@addClass':'ES-Node'
 		}
 	}),
 	Query:DIV.extended({
+		styles:`
+			.ES-Query-Json {
+				vertical-align: top;
+				display: inline-block;
+				width: 49%;
+				height: -webkit-fill-available;
+				max-height: -webkit-fill-available;
+				min-height: -webkit-fill-available;
+			}
+			.ES-Query-Go {
+				color:green;
+				font-size:1.5em;
+				vertical-align:middle;
+				margin:0 0.5em;
+			}
+		`,
 		async constructed(){
-			const style = {
-//				autoHeight:true,
-				style:{
-					display:'inline-block',
-					width:'49%',
-					height:'10em'
-				}
+			const ESQueryJson = {
+				'@addClass':'ES-Query-Json'
 			} ;
 			var indices = await fetchJson("http://"+this.host+"/_all/_mappings") ;
 			this.append(
-				DIV(
-					()=> on (this.ids.index,this.ids.type) (INPUT({style:{width:'24em'}, id:'path',value:"/"+this.ids.index.selectedItem+this.ids.type.selectedItem+"/_search"})),
+				DIV({style:{padding:'0.2em'}},
+					SELECT({
+						id:'method',
+						get selectedValue(){ return this.selectedOptions[0].value }
+					},['GET','POST','HEAD','PUT','DELETE'].map(m => OPTION(m))),
+					()=> on (this.ids.index,this.ids.type) (INPUT({style:{width:'24em'}, id:'path',value:"/"+(this.ids.index.selectedItem||"?")+(this.ids.type.selectedItem||"")+"/_search"})),
 					PopDownMenu({
 						id:'index',
 						options:() => sortKeys(indices)
@@ -285,10 +287,30 @@ const ES = {
 					()=> on (this.ids.index) (PopDownMenu({
 						id:'type',
 						options:()=> [""].concat(sortKeys(indices[this.ids.index.selectedItem].mappings).map(type => "/"+type))
-					}))
+					})),
+					Icon({
+						'@addClass':'ES-Query-Go',
+						icon:'caret-right',
+						onclick: async (e)=> {
+							try {
+								e.target.disabled = true ;
+								e.target.style.color = '#ccc' ;
+								this.ids.result.value = undefined ;
+								this.ids.result.value = await fetchJson("http://"+this.host+this.ids.path.value, { 
+									method: this.ids.method.selectedValue,
+									headers: this.ids.method.selectedValue in { POST:true, PUT:true } ? new Headers({ 'Content-Type': 'application/json' }) : undefined,
+									body: this.ids.method.selectedValue in { POST:true, PUT:true } ? JSON.stringify(this.ids.query.value) : undefined
+								})
+							} catch (ex) {
+								displayError(ex) ;
+							}
+							e.target.disabled = false ;
+							e.target.style.color = '' ;
+						}
+					})
 				),
-				JsonEditor(style),
-				JsonEditor(style)
+				JsonEditor(Object.assign({id:'query'},ESQueryJson)),
+				JsonEditor(Object.assign({id:'result'},ESQueryJson))
 			) ;
 		}
 	}),
@@ -340,7 +362,7 @@ const ES = {
 			this.value = await fetchJson( "http://"+this.host+"/", { method: 'GET', mode: 'cors' }) ;
 		},
 		prototype:{
-			className:'ES-Root',
+			'@addClass':'ES-Root',
 			autoHeight:true
 		}
 	})
@@ -383,7 +405,7 @@ const App = DIV.extended({
 		
 	},
 	prototype:{
-		className:'App'
+		'@addClass':'App'
 	}
 }) ;
 
