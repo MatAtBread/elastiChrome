@@ -24,8 +24,64 @@ po.tag(window,"DIV,INPUT,BUTTON,SPAN,TABLE,TR,TD,A,SELECT,OPTION",{
 	}
 }) ;
 
+// Parse strings like "1.23mb" into numbers of bytes
+function parseMem(s) {
+	if (s===null) return 0 ;
+	var m = s.match(/([+\-0-9.]+)\s*([kmgtpb])/) ;
+	return +m[1]*({
+		b:1,
+		k:1024,
+		m:1024*1024,
+		g:1024*1024*1024,
+		t:1024*1024*1024*1024,
+		p:1024*1024*1024*1024*1024,
+	}[m[2]]) ;
+
+}
+
+/* Return a number with comma separated thousands upto a billion, or use kMGPT */
+Number.prototype.toHumanString = function() {
+    if (isNaN(this) || this===null || this===undefined)
+        return null ;
+    var eng = 0 ;
+    var n = this ;
+    while (Math.abs(n) >= 1e4) { n = n/1000 ; eng++ }
+    var i = n|0 ;
+    var f = 0 ; //n-i ;
+    var j = ""+i ;
+    var r = "" ;
+    while (j.length) {
+        r = j.slice(-3)+","+r ;
+        j = j.slice(0,-3) ;
+    }
+    r = r.slice(0,-1) ;
+    return (f && !eng?r+"."+f: r.split(".")[0]+" kMGPT"[eng]) ;
+}
+
+Number.prototype.toHumanPeriod = function(noZeros,defaultValue) {
+    if (isNaN(this) || this===null || this===undefined)
+        return defaultValue ;
+    var min = this/60000 |0 ;
+    var sec = (this/1000 |0)%60 ;
+    if (min>=120)
+        return (min/60|0)+"\u02B0"+(noZeros ? "":("0"+(min%60)).slice(-2)+"\u1D50");
+    return min?min+"\u1D50"+(noZeros?"":("0"+sec).slice(-2)+"\u02e2"):sec+"\u02e2" ;
+}
+
+Number.prototype.toHumanPercent = function() {
+    if (this == 0) return "0%" ;
+    if (this < 1 && this > 0) return "."+((this*10 |0)||1)+"%" ;
+    if (this > -1 && this < 0) return "-."+((this*10 |0)||1)+"%" ;
+    return (this|0)+"%" ;
+}
+
 function fetchJson(url,opts) {
-	return fetch(url, opts).then(r => r.json());
+	return fetch(url, opts).then(async r =>{ 
+		if (r.status===200 ) 
+			return r.json() ; 
+		var body = await r.text() ;
+		throw new Error(r.url+"\n\n"+r.statusText+" "+r.status+"\n"+body) ; 
+	});
 }
 
 function displayError(ex) {
@@ -40,6 +96,13 @@ function updateProfile(obj) {
 function profile() {
 	return JSON.parse(localStorage.profile || "{}") ;
 }
+
+const Select = SELECT.extended({
+	prototype:{
+		get selectedItem(){ return this.selectedOptions[0] },
+		get selectedValue(){ return this.selectedItem.value }
+	}
+});
 
 export const Icon = SPAN.extended(() => ({
 	constructed() {
@@ -66,7 +129,7 @@ const DataTable = TABLE.extended({
 					function walk(v,path) {
 						return v && Object.keys(v).map(key => 
 							v[key] && typeof v[key]==='object' 
-								? walk(v[key],path.concat(key+".")) 
+								? walk(v[key],path.concat(Array.isArray(v)?"["+key+"]":key+".")) 
 								: TR(TD(path.join(""),key),TD(v[key])))
 					}
 					this.removeChildren(this.childNodes) ;
@@ -84,7 +147,9 @@ const JsonEditor = DIV.extended({
 		this.editor.getSession().setMode("ace/mode/javascript");
 		this.properties({value:{
 			get:() => {
-				return JSON.parse(this.editor.getValue()) ;
+				// Use 'eval' so sloppy JSON is allowed :)
+				return eval("("+this.editor.getValue()+")") ;
+//				return JSON.parse(this.editor.getValue()) ;
 			}, 
 			set:obj => {
 				if (obj===undefined)
@@ -105,9 +170,28 @@ const JsonEditor = DIV.extended({
 		}}) ;
 	},
 	prototype:{
+		getText() { return this.editor.getValue() },
+		setText(t) { return this.editor.setValue(t) },
 		onRemovedFromDOM(){
 			this.editor.destroy() ;
 		}
+	}
+}) ;
+
+const DataDisplay = DIV.extended({
+	constructed(){
+		var format = Select({id:'format', style:{ position:'absolute', top: '6em', right:'1em'}},
+				OPTION({format:JsonEditor},"JSON"),
+				OPTION({format:DataTable},"Flat")
+		) ;
+		this.append(()=> on (format) (format.selectedItem && format.selectedItem.format({style:{
+			height:'-webkit-fill-available',
+			width:'100%'
+		},id:'data',value:this.ids.data && this.ids.data.value})),format) ;
+	},
+	prototype:{
+		get value() { return this.firstChild.value },
+		set value(v) { this.firstChild.value = v },
 	}
 }) ;
 
@@ -201,6 +285,7 @@ const Option = SPAN.extended({
 	}
 }) ;
 
+var histIdx = 0 ;
 const ES = {
 	Explorer:DIV.extended({
 		styles:`
@@ -215,12 +300,11 @@ const ES = {
 						border:'1px solid black'
 					}
 				},
-				Option({value:'Root'},"Root"),
 				Option({value:'Query'},"Query"),
 				Option({value:'Nodes'},"Nodes")
 			) ;
 			this.append(menu) ;
-			this.append(()=> on (menu) (menu.selectedItem && ES[menu.selectedItem.value]({
+			this.append(()=> on (menu) ((menu.selectedItem ? ES[menu.selectedItem.value] : ES.Root)({
 				host:this.host,
 				'@addClass':'ES-Explorer'
 			}))) ;
@@ -232,6 +316,7 @@ const ES = {
 			margin:1em;
 			display: inline-block;
 			border: 1px solid black;
+			white-space: nowrap;
 		}
 		`,
 		constructed(){
@@ -242,7 +327,11 @@ const ES = {
 					DataTable({value:{
 						name:this.value.name,
 						host:this.value.host,
-						version:this.value.version
+						docs:this.value.indices.docs.count.toHumanString()+" (-"+this.value.indices.docs.deleted.toHumanString()+")",
+						CPU:('percent' in this.value.os.cpu ? this.value.os.cpu.percent : (100 - this.value.os.cpu.idle)).toHumanPercent(),
+						Load:this.value.os.cpu.load_average && Object.keys(this.value.os.cpu.load_average).map(k => this.value.os.cpu.load_average[k]).join(", "),
+						'Disk Used':(100*(1-this.value.fs.total.available_in_bytes / this.value.fs.total.total_in_bytes)).toHumanPercent(),
+						'Heap Used': this.value.jvm.mem.heap_used_percent.toHumanPercent()
 					}})
 				)
 			) ;
@@ -257,6 +346,7 @@ const ES = {
 				vertical-align: top;
 				display: inline-block;
 				width: 49%;
+				font-size: 0.85em;
 				height: -webkit-fill-available;
 				max-height: -webkit-fill-available;
 				min-height: -webkit-fill-available;
@@ -269,37 +359,40 @@ const ES = {
 			}
 		`,
 		async constructed(){
-			const ESQueryJson = {
-				'@addClass':'ES-Query-Json'
-			} ;
+			const hasBody = ()=> this.ids.method.selectedValue in { POST:true, PUT:true } ;
+			
 			var indices = await fetchJson("http://"+this.host+"/_all/_mappings") ;
 			this.append(
 				DIV({style:{padding:'0.2em'}},
-					SELECT({
+					Select({
 						id:'method',
-						get selectedValue(){ return this.selectedOptions[0].value }
+						onchange:e => this.ids.query.style.opacity = hasBody() ? 1:0.3
 					},['GET','POST','HEAD','PUT','DELETE'].map(m => OPTION(m))),
-					()=> on (this.ids.index,this.ids.type) (INPUT({style:{width:'24em'}, id:'path',value:"/"+(this.ids.index.selectedItem||"?")+(this.ids.type.selectedItem||"")+"/_search"})),
+					()=> on (this.ids.index,this.ids.type) (INPUT({style:{width:'24em'}, id:'path',value:"/"+(this.ids.index.selectedItem||"?")+(this.ids.type.selectedItem||"")})),
 					PopDownMenu({
 						id:'index',
 						options:() => sortKeys(indices)
 					}),
 					()=> on (this.ids.index) (PopDownMenu({
 						id:'type',
-						options:()=> [""].concat(sortKeys(indices[this.ids.index.selectedItem].mappings).map(type => "/"+type))
+						options:()=> ["/_search","/_settings","/_mapping"].concat(sortKeys(indices[this.ids.index.selectedItem].mappings).map(type => "/"+type+"/_search"))
 					})),
 					Icon({
 						'@addClass':'ES-Query-Go',
 						icon:'caret-right',
 						onclick: async (e)=> {
 							try {
+								var history = Array.isArray(profile().history) ? profile().history : [] ;
+								history.unshift(this.ids.query.value) ;
+								updateProfile({history, lastQuery:this.ids.query.value});
+								histIdx = history.length-1 ;
 								e.target.disabled = true ;
 								e.target.style.color = '#ccc' ;
 								this.ids.result.value = undefined ;
 								this.ids.result.value = await fetchJson("http://"+this.host+this.ids.path.value, { 
 									method: this.ids.method.selectedValue,
-									headers: this.ids.method.selectedValue in { POST:true, PUT:true } ? new Headers({ 'Content-Type': 'application/json' }) : undefined,
-									body: this.ids.method.selectedValue in { POST:true, PUT:true } ? JSON.stringify(this.ids.query.value) : undefined
+									headers: hasBody() ? new Headers({ 'Content-Type': 'application/json' }) : undefined,
+									body: hasBody() ? JSON.stringify(this.ids.query.value) : undefined
 								})
 							} catch (ex) {
 								displayError(ex) ;
@@ -307,46 +400,134 @@ const ES = {
 							e.target.disabled = false ;
 							e.target.style.color = '' ;
 						}
-					})
+					}),
+					Icon({icon:'paragraph', onclick:e=>{
+						this.ids.query.value = this.ids.query.value ;
+					}}),
+					Icon({id:'leftArrow',icon:'arrow-left', onclick:e=>{
+						histIdx += 1 ;
+						if (histIdx >= profile().history.length)
+							histIdx = profile().history.length-1 ;
+						this.ids.query.value = profile().history[histIdx] ;
+						e.target.dispatchEvent(new Event("change")) ;
+					}}),
+					()=> on(this.ids.leftArrow, this.ids.rightArrow) (SPAN(histIdx)),
+					Icon({id:'rightArrow',icon:'arrow-right', onclick:e=>{
+						histIdx -= 1 ;
+						if (histIdx < 0)
+							histIdx = 0 ;
+						this.ids.query.value = profile().history[histIdx] ;
+						e.target.dispatchEvent(new Event("change")) ;
+					}}),
+					""
 				),
-				JsonEditor(Object.assign({id:'query'},ESQueryJson)),
-				JsonEditor(Object.assign({id:'result'},ESQueryJson))
+				JsonEditor({style:{ opacity:0.3 },id:'query','@addClass':'ES-Query-Json',value:profile().lastQuery||{}}),
+				DataDisplay({id:'result','@addClass':'ES-Query-Json'})
 			) ;
 		}
 	}),
-	Shards:DIV.extended({
-		constructed(){
-			this.append(this.shards.map(s => DIV(s.index+" "+s.shard+" "+s.prirep))) ;
-		}
-	}),
 	Nodes:DIV.extended({
+		styles:`
+			.ES-Nodes .Icon {
+				font-size: 2em;
+			}
+			.ES-Nodes .Icon.p {
+				position: absolute;
+				color: black ;
+			}
+			.ES-Nodes .Icon.r {
+				position: absolute;
+				color: #aaa ;
+			}
+			.ES-Nodes .Icon.STARTED {
+				background-color: #cfc;
+			}
+			.ES-Nodes .Icon.INITIALIZING {
+				background-color: #fcf;
+			}
+			.ES-Nodes .Icon.UNASSIGNED {
+				background-color: #fcc;
+			}
+			.ES-Nodes .Icon.RELOCATING {
+				background-color: #cff;
+			}
+			.ES-Nodes .Icon > span {
+			    position: absolute;
+			    left: 30%;
+			    z-index: 2;
+			    color: white;
+			    font-size: 0.7em;
+			    top: 12%;
+			}
+			.ES-Nodes tr {
+				min-height: 2.3em;
+			}
+			.ES-Nodes td {
+				background-color: #eee;
+				min-width:9em;
+			}
+			.ES-Nodes tr > td:first-child {
+				white-space: nowrap;
+			}
+		`,
 		async constructed() {
-			var data = await fetchJson( "http://"+this.host+"/_nodes");
+			var data = await fetchJson( "http://"+this.host+"/_nodes/stats");
 			
-/*			var shards = await fetchJson( "http://"+this.host+"/_cat/shards?format=json") ;
+			var shards = await fetchJson( "http://"+this.host+"/_cat/shards?format=json") ;
 			var maxShards = 0 ;
-			shards.sort((a,b) => {
-				if (a.index < b.index) return -1 ;
-				if (a.index > b.index) return 1 ;
-				maxShards = Math.max(maxShards,+a.shard,+b.shard) ;
-				return (+a.shard)-(+b.shard) ;
-			}) ; */
+			var indices = {} ;
+			shards.forEach(s => {
+				maxShards = Math.max(maxShards,+s.shard) ;
+				indices[s.index] = indices[s.index] || {} ; 
+				indices[s.index][s.node] = indices[s.index][s.node] || [] ;
+				indices[s.index][s.node].push(s) ;
+			}) ;
+
+			function nodeName(a,b) {
+				return a.name < b.name ? -1 : a.name > b.name ? 1 : 0 ;
+			}
 			
-			var more ;
+			var docs, store ;
 			this.append(
 				DIV("Cluster Name: ",data.cluster_name),
-				DIV(Object.keys(data.nodes).map(k => 
-					ES.Node({onclick(){ more.value = data.nodes[k] },value:data.nodes[k]} /* , 
-						ES.Shards({
-							maxShards,
-							shards:shards.filter(s => s.node === data.nodes[k].name)
-						})*/
-					))
-				),
-				(more = JsonEditor({style:{
-						fontSize:'85%'
-					},autoHeight:true})) 
-			);			
+				TABLE({ className:'ES-Nodes' },
+					TR(TD(INPUT({id:'indexname', onkeyup:e=>{
+						try {
+							var reg = this.ids.indexname.value && new RegExp(this.ids.indexname.value,"i") ;
+							this.querySelectorAll('.ES-Node-Index').forEach(indexRow => indexRow.style.display = !reg || indexRow.value.match(reg) ? '':'none') ;
+							this.ids.nameerror.innerText = '' ;
+						} catch (ex) {
+							this.ids.nameerror.innerText = ex.message ;
+						}
+					}}), DIV({id:'nameerror', style:{
+						whiteSpace:'normal',
+						color:'#d22',
+						fontWeight:550,
+						fontSize:"90%"
+					}})),Object.keys(data.nodes).map(k => 
+						ES.Node({ style:{display:'table-cell'},value:data.nodes[k] })
+					)),
+					Object.keys(indices).sort().map(i => { 
+						var tot = { docs:0, store:0 };
+						return TR({className:'ES-Node-Index', value:i},
+							TD(Icon({ icon:'database'}),i),
+							Object.keys(data.nodes).map(n => indices[i][data.nodes[n].name] ? TD({style:{position:'relative'}},indices[i][data.nodes[n].name].map(z => { 
+								if (z.prirep === 'p') {
+									tot.docs += +z.docs ;
+//console.log(i,z.store, parseMem(z.store), tot.store, tot.store+parseMem(z.store));
+									tot.store += parseMem(z.store) ;
+								}
+								return Icon({ 
+									title: z.docs+' docs\n'+z.store+'\n'+(parseMem(z.store)/z.docs|0)+" per doc",
+									className:z.state+' '+z.prirep, 
+									icon:'hdd',
+									style: { left: (z.shard*1.4)+"em", bottom:0 }
+									},SPAN({ style:{position: 'absolute', right:0}},z.shard)) 
+							})) : TD()),
+							TD(Icon({ icon:'database'}),DIV({style:{display:'inline-block',fontSize:"0.75em"}},[tot.docs+' docs',tot.store.toHumanString()+'b',(tot.store/tot.docs|0)+" per doc"].map(t => DIV(t))))
+					)
+				})
+			))
 		}
 	}),
 	Root:DataTable.extended({

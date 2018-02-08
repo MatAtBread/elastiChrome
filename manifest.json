@@ -5,10 +5,11 @@
 	"version": "1.1",
 	"browser_action": {
 		"default_icon": "icon.png",
-		"default_popup": "popup.html"
+		"default_popup": "ext.html"
 	},
-	"content_security_policy": "script-src 'self' https://ajaxorg.github.io; object-src 'self'",
+	"content_security_policy": "script-src 'self' https://ajaxorg.github.io 'unsafe-eval'; object-src 'self'",
 	"permissions": [
+		"http://*/",
 		"tabs",
 		"activeTab",
 		"storage"
