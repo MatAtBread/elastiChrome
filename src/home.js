@@ -300,6 +300,7 @@ const ES = {
 						border:'1px solid black'
 					}
 				},
+				Option({value:'Tasks'},"Tasks"),
 				Option({value:'Query'},"Query"),
 				Option({value:'Nodes'},"Nodes")
 			) ;
@@ -528,6 +529,30 @@ const ES = {
 					)
 				})
 			))
+		}
+	}),
+	Tasks:DIV.extended({
+		styles:`
+		.ES-Tasks TD {
+			border-bottom: 1px solid #aaa;
+		}
+		`,
+		async constructed(){
+			var tasks = await fetchJson( "http://"+this.host+"/_tasks?detailed&group_by=parents") ; // actions=*search&
+			tasks = tasks.tasks ;
+			this.append(TABLE({className:'ES-Tasks'},Object.keys(tasks).sort((a,b)=>tasks[b].running_time_in_nanos - tasks[a].running_time_in_nanos).map(t => { 
+				var query, desc = tasks[t].description.split("source[")
+				try {
+					query = JSON.stringify(JSON.parse(desc[1].slice(0,-1)),null,2) ;
+				} catch (ex) {
+					query = "" ;
+				}
+				return TR(
+					TD((tasks[t].running_time_in_nanos/1e6).toHumanPeriod()),
+					TD(desc[0] || tasks[t].action),
+					TD({title:query},query)
+				)
+			}))) ;
 		}
 	}),
 	Root:DataTable.extended({
