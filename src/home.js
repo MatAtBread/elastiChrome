@@ -81,7 +81,7 @@ function fetchJson(url,opts) {
 			return r.json() ; 
 		var body = await r.text() ;
 		throw new Error(r.url+"\n\n"+r.statusText+" "+r.status+"\n"+body) ; 
-	});
+	}, x => alert(x.toString()));
 }
 
 function displayError(ex) {
@@ -180,18 +180,21 @@ const JsonEditor = DIV.extended({
 
 const DataDisplay = DIV.extended({
 	constructed(){
-		var format = Select({id:'format', style:{ position:'absolute', top: '6em', right:'1em'}},
+		var format = Select({style:{display:'block'}},
 				OPTION({format:JsonEditor},"JSON"),
 				OPTION({format:DataTable},"Flat")
 		) ;
-		this.append(()=> on (format) (format.selectedItem && format.selectedItem.format({style:{
-			height:'-webkit-fill-available',
-			width:'100%'
-		},id:'data',value:this.ids.data && this.ids.data.value})),format) ;
+		this.append(
+			format,
+			()=> on (format) (format.selectedItem && format.selectedItem.format({style:{
+				height:'-webkit-fill-available',
+				width:'100%'
+			},id:'data',value:this.ids.data && this.ids.data.value}))
+		);
 	},
 	prototype:{
-		get value() { return this.firstChild.value },
-		set value(v) { this.firstChild.value = v },
+		get value() { return this.ids.data.value },
+		set value(v) { this.ids.data.value = v },
 	}
 }) ;
 
@@ -362,7 +365,7 @@ const ES = {
 		async constructed(){
 			const hasBody = ()=> this.ids.method.selectedValue in { POST:true, PUT:true } ;
 			
-			var indices = await fetchJson("http://"+this.host+"/_all/_mappings") ;
+			var indices = await fetchJson(this.host+"/_all/_mappings") ;
 			this.append(
 				DIV({style:{padding:'0.2em'}},
 					Select({
@@ -390,11 +393,15 @@ const ES = {
 								e.target.disabled = true ;
 								e.target.style.color = '#ccc' ;
 								this.ids.result.value = undefined ;
-								this.ids.result.value = await fetchJson("http://"+this.host+this.ids.path.value, { 
+								var xform = this.ids.transformation.editor.getValue() ;
+								if (xform) {
+									xform = new Function("data","return ("+xform+")") ;
+								} else { xform =  x => x } 
+								this.ids.result.value = xform(await fetchJson(this.host+this.ids.path.value, { 
 									method: this.ids.method.selectedValue,
 									headers: hasBody() ? new Headers({ 'Content-Type': 'application/json' }) : undefined,
 									body: hasBody() ? JSON.stringify(this.ids.query.value) : undefined
-								})
+								}))
 							} catch (ex) {
 								displayError(ex) ;
 							}
@@ -423,7 +430,13 @@ const ES = {
 					""
 				),
 				JsonEditor({style:{ opacity:0.3 },id:'query','@addClass':'ES-Query-Json',value:profile().lastQuery||{}}),
-				DataDisplay({id:'result','@addClass':'ES-Query-Json'})
+				DIV({className:'ES-Query-Json',style:{ position:'absolute', top: '6em', right:'1em'}},
+						DIV(
+								"Transformation",
+								JsonEditor({id:'transformation', style:{ height: '11em'}})
+						),
+						DataDisplay({id:'result'})
+				)
 			) ;
 		}
 	}),
@@ -472,9 +485,9 @@ const ES = {
 			}
 		`,
 		async constructed() {
-			var data = await fetchJson( "http://"+this.host+"/_nodes/stats");
-			
-			var shards = await fetchJson( "http://"+this.host+"/_cat/shards?format=json") ;
+			var data = await fetchJson( this.host+"/_nodes/stats");
+			var nodes = Object.keys(data.nodes).sort((a,b)=>data.nodes[b].os.cpu.load_average['1m'] - data.nodes[a].os.cpu.load_average['1m']) ;
+			var shards = await fetchJson( this.host+"/_cat/shards?format=json") ;
 			var maxShards = 0 ;
 			var indices = {} ;
 			shards.forEach(s => {
@@ -505,14 +518,14 @@ const ES = {
 						color:'#d22',
 						fontWeight:550,
 						fontSize:"90%"
-					}})),Object.keys(data.nodes).map(k => 
+					}})),nodes.map(k => 
 						ES.Node({ style:{display:'table-cell'},value:data.nodes[k] })
 					)),
 					Object.keys(indices).sort().map(i => { 
 						var tot = { docs:0, store:0 };
 						return TR({className:'ES-Node-Index', value:i},
 							TD(Icon({ icon:'database'}),i),
-							Object.keys(data.nodes).map(n => indices[i][data.nodes[n].name] ? TD({style:{position:'relative'}},indices[i][data.nodes[n].name].map(z => { 
+							nodes.map(n => indices[i][data.nodes[n].name] ? TD({style:{position:'relative'}},indices[i][data.nodes[n].name].map(z => { 
 								if (z.prirep === 'p') {
 									tot.docs += +z.docs ;
 //console.log(i,z.store, parseMem(z.store), tot.store, tot.store+parseMem(z.store));
@@ -538,7 +551,7 @@ const ES = {
 		}
 		`,
 		async constructed(){
-			var tasks = await fetchJson( "http://"+this.host+"/_tasks?detailed&group_by=parents") ; // actions=*search&
+			var tasks = await fetchJson( this.host+"/_tasks?detailed&group_by=parents") ; // actions=*search&
 			tasks = tasks.tasks ;
 			this.append(TABLE({className:'ES-Tasks'},Object.keys(tasks).sort((a,b)=>tasks[b].running_time_in_nanos - tasks[a].running_time_in_nanos).map(t => { 
 				var query, desc = tasks[t].description.split("source[")
@@ -565,7 +578,7 @@ const ES = {
 			}
 		`,
 		async constructed(){
-			this.value = await fetchJson( "http://"+this.host+"/", { method: 'GET', mode: 'cors' }) ;
+			this.value = await fetchJson( this.host+"/", { method: 'GET', mode: 'cors' }) ;
 		},
 		prototype:{
 			'@addClass':'ES-Root',
@@ -596,9 +609,7 @@ const App = DIV.extended({
 					selected:option => this.ids.host.value = option,
 				}),
 				BUTTON({id:'connect', onclick:() => { 
-					if (this.ids.host.value.startsWith("http://"))
-						this.ids.host.value = this.ids.host.value.substring(7) ;
-					this.ids.host.value = this.ids.host.value.split("/")[0] ;
+//					this.ids.host.value = this.ids.host.value.split("/")[0] ;
 					
 					updateProfile({
 						hosts:Object.assign(profile().hosts || {},{[this.ids.host.value]:Date.now()}),
