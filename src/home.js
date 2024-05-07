@@ -75,12 +75,24 @@ Number.prototype.toHumanPercent = function() {
     return (this|0)+"%" ;
 }
 
-function fetchJson(url,opts) {
-	return fetch(url, opts).then(async r =>{ 
-		if (r.status===200 ) 
-			return r.json() ; 
+function fetchJson(urlSpec,opts) {
+	const url = new URL(urlSpec);
+	const headers = url.username && url.password ? new Headers({
+		"Authorization": `Basic ${btoa(`${url.username}:${url.password}`)}`
+	}) : undefined;
+
+	opts = {
+		...opts,
+		headers
+	};
+	url.password = '';
+	url.username = '';
+
+	return fetch(url, opts).then(async r =>{
+		if (r.status===200 )
+			return r.json() ;
 		var body = await r.text() ;
-		throw new Error(r.url+"\n\n"+r.statusText+" "+r.status+"\n"+body) ; 
+		throw new Error(r.url+"\n\n"+r.statusText+" "+r.status+"\n"+body) ;
 	}, x => alert(x.toString()));
 }
 
@@ -127,9 +139,9 @@ const DataTable = TABLE.extended({
 			value:{
 				set:value =>{
 					function walk(v,path) {
-						return v && Object.keys(v).map(key => 
-							v[key] && typeof v[key]==='object' 
-								? walk(v[key],path.concat(Array.isArray(v)?"["+key+"]":key+".")) 
+						return v && Object.keys(v).map(key =>
+							v[key] && typeof v[key]==='object'
+								? walk(v[key],path.concat(Array.isArray(v)?"["+key+"]":key+"."))
 								: TR(TD(path.join(""),key),TD(v[key])))
 					}
 					this.removeChildren(this.childNodes) ;
@@ -150,7 +162,7 @@ const JsonEditor = DIV.extended({
 				// Use 'eval' so sloppy JSON is allowed :)
 				return eval("("+this.editor.getValue()+")") ;
 //				return JSON.parse(this.editor.getValue()) ;
-			}, 
+			},
 			set:obj => {
 				if (obj===undefined)
 					this.editor.setValue('') ;
@@ -188,7 +200,8 @@ const DataDisplay = DIV.extended({
 			format,
 			()=> on (format) (format.selectedItem && format.selectedItem.format({style:{
 				height:'-webkit-fill-available',
-				width:'100%'
+				width:'100%',
+				position: 'absolute'
 			},id:'data',value:this.ids.data && this.ids.data.value}))
 		);
 	},
@@ -215,7 +228,7 @@ const PopDownMenu = BUTTON.extended({
 	    text-overflow: ellipsis;
 	    white-space: nowrap;
 	    text-align: left;
-	    left: 0;	
+	    left: 0;
 	    z-index:99999;
 	    max-height: 30em;
 	    overflow-y: scroll;
@@ -263,7 +276,7 @@ const Option = SPAN.extended({
 	.Option {
 		display: inline-block;
 		margin: 0.4em;
-		cursor: pointer; 
+		cursor: pointer;
 		margin-bottom: 0.2em;
 		border-bottom: 2px solid rgba(0,0,0,0);
 	}
@@ -277,10 +290,10 @@ const Option = SPAN.extended({
 	`,
 	prototype:{
 		'@addClass':'Option',
-		onclick() { 
+		onclick() {
 			if (this.parentNode.selectedItem)
 				this.parentNode.selectedItem.classList.remove("selected") ;
-			this.parentNode.selectedItem = this ; 
+			this.parentNode.selectedItem = this ;
 			this.parentNode.dispatchEvent(new Event("change")) ;
 			this.parentNode.selectedItem.classList.add("selected") ;
 		}
@@ -354,6 +367,7 @@ const ES = {
 				height: -webkit-fill-available;
 				max-height: -webkit-fill-available;
 				min-height: -webkit-fill-available;
+				position: absolute;
 			}
 			.ES-Query-Go {
 				color:green;
@@ -364,7 +378,7 @@ const ES = {
 		`,
 		async constructed(){
 			const hasBody = ()=> this.ids.method.selectedValue in { POST:true, PUT:true } ;
-			
+
 			var indices = await fetchJson(this.host+"/_all/_mappings") ;
 			this.append(
 				DIV({style:{padding:'0.2em'}},
@@ -396,8 +410,8 @@ const ES = {
 								var xform = this.ids.transformation.editor.getValue() ;
 								if (xform) {
 									xform = new Function("data","return ("+xform+")") ;
-								} else { xform =  x => x } 
-								this.ids.result.value = xform(await fetchJson(this.host+this.ids.path.value, { 
+								} else { xform =  x => x }
+								this.ids.result.value = xform(await fetchJson(this.host+this.ids.path.value, {
 									method: this.ids.method.selectedValue,
 									headers: hasBody() ? new Headers({ 'Content-Type': 'application/json' }) : undefined,
 									body: hasBody() ? JSON.stringify(this.ids.query.value) : undefined
@@ -492,7 +506,7 @@ const ES = {
 			var indices = {} ;
 			shards.forEach(s => {
 				maxShards = Math.max(maxShards,+s.shard) ;
-				indices[s.index] = indices[s.index] || {} ; 
+				indices[s.index] = indices[s.index] || {} ;
 				indices[s.index][s.node] = indices[s.index][s.node] || [] ;
 				indices[s.index][s.node].push(s) ;
 			}) ;
@@ -500,7 +514,7 @@ const ES = {
 			function nodeName(a,b) {
 				return a.name < b.name ? -1 : a.name > b.name ? 1 : 0 ;
 			}
-			
+
 			var docs, store ;
 			this.append(
 				DIV("Cluster Name: ",data.cluster_name),
@@ -518,25 +532,25 @@ const ES = {
 						color:'#d22',
 						fontWeight:550,
 						fontSize:"90%"
-					}})),nodes.map(k => 
+					}})),nodes.map(k =>
 						ES.Node({ style:{display:'table-cell'},value:data.nodes[k] })
 					)),
-					Object.keys(indices).sort().map(i => { 
+					Object.keys(indices).sort().map(i => {
 						var tot = { docs:0, store:0 };
 						return TR({className:'ES-Node-Index', value:i},
 							TD(Icon({ icon:'database'}),i),
-							nodes.map(n => indices[i][data.nodes[n].name] ? TD({style:{position:'relative'}},indices[i][data.nodes[n].name].map(z => { 
+							nodes.map(n => indices[i][data.nodes[n].name] ? TD({style:{position:'relative'}},indices[i][data.nodes[n].name].map(z => {
 								if (z.prirep === 'p') {
 									tot.docs += +z.docs ;
 //console.log(i,z.store, parseMem(z.store), tot.store, tot.store+parseMem(z.store));
 									tot.store += parseMem(z.store) ;
 								}
-								return Icon({ 
+								return Icon({
 									title: z.docs+' docs\n'+z.store+'\n'+(parseMem(z.store)/z.docs|0)+" per doc",
-									className:z.state+' '+z.prirep, 
+									className:z.state+' '+z.prirep,
 									icon:'hdd',
 									style: { left: (z.shard*1.4)+"em", bottom:0 }
-									},SPAN({ style:{position: 'absolute', right:0}},z.shard)) 
+									},SPAN({ style:{position: 'absolute', right:0}},z.shard))
 							})) : TD()),
 							TD(Icon({ icon:'database'}),DIV({style:{display:'inline-block',fontSize:"0.75em"}},[tot.docs+' docs',tot.store.toHumanString()+'b',(tot.store/tot.docs|0)+" per doc"].map(t => DIV(t))))
 					)
@@ -553,7 +567,7 @@ const ES = {
 		async constructed(){
 			var tasks = await fetchJson( this.host+"/_tasks?detailed&group_by=parents") ; // actions=*search&
 			tasks = tasks.tasks ;
-			this.append(TABLE({className:'ES-Tasks'},Object.keys(tasks).sort((a,b)=>tasks[b].running_time_in_nanos - tasks[a].running_time_in_nanos).map(t => { 
+			this.append(TABLE({className:'ES-Tasks'},Object.keys(tasks).sort((a,b)=>tasks[b].running_time_in_nanos - tasks[a].running_time_in_nanos).map(t => {
 				var query, desc = tasks[t].description.split("source[")
 				try {
 					query = JSON.stringify(JSON.parse(desc[1].slice(0,-1)),null,2) ;
@@ -608,18 +622,18 @@ const App = DIV.extended({
 					options:() => sortKeys(profile().hosts,(a,b,o) => { o[b]-o[a] }),
 					selected:option => this.ids.host.value = option,
 				}),
-				BUTTON({id:'connect', onclick:() => { 
+				BUTTON({id:'connect', onclick:() => {
 //					this.ids.host.value = this.ids.host.value.split("/")[0] ;
-					
+
 					updateProfile({
 						hosts:Object.assign(profile().hosts || {},{[this.ids.host.value]:Date.now()}),
 						lastUrl:this.ids.host.value
 					}) ;
 				}},"Connect")),
-				
+
 				e => on (this.ids.connect,'click') (e && ES.Explorer({ host:this.ids.host.value }))
 		);
-		
+
 	},
 	prototype:{
 		'@addClass':'App'
