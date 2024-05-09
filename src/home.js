@@ -75,16 +75,14 @@ Number.prototype.toHumanPercent = function() {
     return (this|0)+"%" ;
 }
 
-function fetchJson(urlSpec,opts) {
+function fetchJson(urlSpec,opts = {}) {
 	const url = new URL(urlSpec);
-	const headers = url.username && url.password ? new Headers({
-		"Authorization": `Basic ${btoa(`${url.username}:${url.password}`)}`
-	}) : undefined;
-
-	opts = {
-		...opts,
-		headers
-	};
+	if (url.username && url.password) {
+		if (!opts.headers) {
+			opts.headers = new Headers();
+		}
+		opts.headers.append("Authorization", `Basic ${btoa(`${url.username}:${url.password}`)}`);
+	}
 	url.password = '';
 	url.username = '';
 
@@ -160,7 +158,7 @@ const JsonEditor = DIV.extended({
 		this.properties({value:{
 			get:() => {
 				// Use 'eval' so sloppy JSON is allowed :)
-				return eval("("+this.editor.getValue()+")") ;
+				return eval("("+(this.editor.getValue() || "null")+")") ;
 //				return JSON.parse(this.editor.getValue()) ;
 			},
 			set:obj => {
